@@ -1,0 +1,35 @@
+mode: "ODOO"   # FAKE oppure ODOO
+
+timezone: "Europe/Rome"
+
+odoo:
+  url: "https://elthub-srl.odoo.com"
+  db: "elthub-srl"
+  user: "odooadmin@elthub.it"
+  password: "4dm1nasdzxc2121!"
+
+mail:
+  enabled: true
+  smtp_host: "elthub-it.mail.protection.outlook.com"
+  smtp_port: 25
+  starttls: true
+  from: "info@elthub.it"
+  to:
+    - "riccardo.dibiagio@elthub.it"
+
+
+rules:
+  ingress_deadline: "09:00"
+  lunch:
+    enabled: true
+    out_window_start: "11:30"
+    out_window_end: "14:00"
+    return_deadline: "14:30"
+  autoclose:
+    enabled: true
+    time: "23:30"
+    tolerance_seconds: 60
+  suppress_no_checkin_if_absent_after: "14:30"
+
+exemptions:
+  limited_rules_employee_ids: [1, 91, 95, 101, 103, 105, 107, 109, 110, 115, 117, 121,]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
@@ -26,6 +26,22 @@ ROW_COLUMNS = [
 
 PRESENT_FILL = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
 ABSENT_FILL = PatternFill(start_color="FFEBEE", end_color="FFEBEE", fill_type="solid")
+
+
+def format_date(value):
+    if not value:
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+    return str(value)
+
+
+def format_time(value):
+    if not value:
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime("%H:%M:%S")
+    return str(value)
 
 
 def build_attendance_rows(
@@ -102,19 +118,20 @@ def export_attendance_excel(day: date, rows: List[Dict[str, object]], output_pat
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
-    first_in_col = ROW_COLUMNS.index("Primo ingresso") + 1
-    last_out_col = ROW_COLUMNS.index("Ultima uscita") + 1
-
     for row in rows:
-        excel_row = [row.get(col, "") for col in ROW_COLUMNS]
+        excel_row = [
+            format_date(row.get("Data")),
+            row.get("ID Dipendente", ""),
+            row.get("Nome Dipendente", ""),
+            row.get("Stato", ""),
+            format_time(row.get("Primo ingresso")),
+            format_time(row.get("Ultima uscita")),
+            row.get("Numero sessioni", ""),
+            row.get("Note", ""),
+        ]
         ws.append(excel_row)
 
         current_row = ws.max_row
-        for col_idx in (first_in_col, last_out_col):
-            cell = ws.cell(row=current_row, column=col_idx)
-            if isinstance(cell.value, datetime):
-                cell.number_format = "HH:MM:SS"
-
         status = row.get("Stato")
         fill = PRESENT_FILL if status == "Presente" else ABSENT_FILL
         for cell in ws[current_row]:

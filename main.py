@@ -1,6 +1,7 @@
 import argparse
 import yaml
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.detector import detect_for_day
@@ -8,6 +9,7 @@ from app.fake_data import build_fake_sessions
 from app.dedup import DedupStore
 from app.mailer import send_mail
 from app.odoo_client import OdooClient
+from app.attendance_report import build_attendance_rows, export_attendance_excel
 
 
 def day_range_utc(day: date, tz_name: str):
@@ -96,23 +98,50 @@ def build_days_to_check(args) -> list[date]:
     raise RuntimeError("mode non valido")
 
 
+def resolve_target_day(day_arg: str | None, tz_name: str) -> date:
+    if day_arg:
+        return date.fromisoformat(day_arg)
+    return datetime.now(ZoneInfo(tz_name)).date()
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["ops", "day", "month"], default="ops",
-                        help="ops=oggi+ieri, day=un giorno, month=intero mese")
+    parser.add_argument("--mode", choices=["ops", "day", "month", "attendance-day"], default="ops",
+                        help="ops=oggi+ieri, day=un giorno, month=intero mese, attendance-day=presenze/assenze giorno")
     parser.add_argument("--lookback-days", type=int, default=1,
                         help="Solo per mode=ops: quanti giorni indietro includere (default 1 = ieri)")
-    parser.add_argument("--day", default=None, help="YYYY-MM-DD (richiesto se mode=day)")
+    parser.add_argument("--day", default=None, help="YYYY-MM-DD (richiesto se mode=day, opzionale per attendance-day)")
     parser.add_argument("--also-prev", action="store_true",
                         help="Se mode=day, include anche il giorno precedente")
     parser.add_argument("--month", default=None, help="YYYY-MM (richiesto se mode=month)")
     parser.add_argument("--send-mail", action="store_true", help="Invia email (se mail.enabled=true)")
     parser.add_argument("--no-dedup", action="store_true",
                         help="Non usare deduplica (utile per report mese/giorno)")
+    parser.add_argument("--output", default=None,
+                        help="Path output Excel (solo mode=attendance-day)")
     args = parser.parse_args()
 
     with open("config.yaml", "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
+
+    if args.mode == "attendance-day":
+        if cfg["mode"].upper() != "ODOO":
+            raise RuntimeError("mode=attendance-day supportato solo con config.yaml mode=ODOO")
+
+        target_day = resolve_target_day(args.day, cfg["timezone"])
+        o = cfg["odoo"]
+        client = OdooClient(o["url"], o["db"], o["user"], o["password"], cfg["timezone"])
+
+        start_utc, end_utc = day_range_utc(target_day, cfg["timezone"])
+        sessions = client.fetch_sessions_for_day(start_utc, end_utc)
+        employees = client.fetch_active_employees()
+
+        rows = build_attendance_rows(target_day, employees, sessions)
+
+        output_path = Path(args.output) if args.output else Path("reports") / f"presenze_assenze_{target_day.isoformat()}.xlsx"
+        generated = export_attendance_excel(target_day, rows, output_path)
+        print(f"Report generato: {generated}")
+        return
 
     days = sorted(build_days_to_check(args))
 

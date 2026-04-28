@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
@@ -26,12 +26,6 @@ ROW_COLUMNS = [
 
 PRESENT_FILL = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
 ABSENT_FILL = PatternFill(start_color="FFEBEE", end_color="FFEBEE", fill_type="solid")
-
-
-def _fmt_dt(dt: Optional[datetime]) -> str:
-    if dt is None:
-        return ""
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def build_attendance_rows(
@@ -57,8 +51,8 @@ def build_attendance_rows(
                     "ID Dipendente": employee_id,
                     "Nome Dipendente": employee_name,
                     "Stato": "Assente",
-                    "Primo ingresso": "",
-                    "Ultima uscita": "",
+                    "Primo ingresso": None,
+                    "Ultima uscita": None,
                     "Numero sessioni": 0,
                     "Note": "Nessuna timbratura registrata",
                 }
@@ -86,8 +80,8 @@ def build_attendance_rows(
                 "ID Dipendente": employee_id,
                 "Nome Dipendente": employee_name,
                 "Stato": "Presente",
-                "Primo ingresso": _fmt_dt(first_in),
-                "Ultima uscita": _fmt_dt(last_out),
+                "Primo ingresso": first_in,
+                "Ultima uscita": last_out,
                 "Numero sessioni": sessions_count,
                 "Note": note,
             }
@@ -108,13 +102,22 @@ def export_attendance_excel(day: date, rows: List[Dict[str, object]], output_pat
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
+    first_in_col = ROW_COLUMNS.index("Primo ingresso") + 1
+    last_out_col = ROW_COLUMNS.index("Ultima uscita") + 1
+
     for row in rows:
         excel_row = [row.get(col, "") for col in ROW_COLUMNS]
         ws.append(excel_row)
 
+        current_row = ws.max_row
+        for col_idx in (first_in_col, last_out_col):
+            cell = ws.cell(row=current_row, column=col_idx)
+            if isinstance(cell.value, datetime):
+                cell.number_format = "HH:MM:SS"
+
         status = row.get("Stato")
         fill = PRESENT_FILL if status == "Presente" else ABSENT_FILL
-        for cell in ws[ws.max_row]:
+        for cell in ws[current_row]:
             cell.fill = fill
 
     ws.freeze_panes = "A2"

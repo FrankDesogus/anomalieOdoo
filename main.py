@@ -141,6 +141,27 @@ def main():
         output_path = Path(args.output) if args.output else Path("reports") / f"presenze_assenze_{target_day.isoformat()}.xlsx"
         generated = export_attendance_excel(target_day, rows, output_path)
         print(f"Report generato: {generated}")
+
+        mail_cfg = cfg.get("mail", {})
+        if args.send_mail:
+            if not mail_cfg.get("enabled", False):
+                print("Invio email non effettuato: mail.enabled=false in config.yaml")
+            else:
+                attendance_subject = f"Report presenze e assenze - {target_day}"
+                attendance_body = (
+                    "Buongiorno,\n\n"
+                    f"vi segnaliamo in allegato il report delle presenze e assenze relativo alla giornata del {target_day}.\n\n"
+                    "Il file contiene l’elenco dei dipendenti attivi e lo stato della presenza registrata su Odoo.\n\n"
+                    "La presente email è stata generata automaticamente dal sistema di controllo presenze.\n\n"
+                    "Cordiali saluti."
+                )
+                send_mail(
+                    subject=attendance_subject,
+                    body=attendance_body,
+                    mail_cfg=mail_cfg,
+                    attachments=[str(generated)],
+                )
+                print("Email inviata.")
         return
 
     days = sorted(build_days_to_check(args))

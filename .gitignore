@@ -1,0 +1,26 @@
+# Ambienti virtuali
+.venv/
+venv/
+
+# PyCharm
+.idea/
+
+# File generati da Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# File locali creati da Claude
+.claude/
+
+# Report generati automaticamente
+reports/
+
+# Log
+*.log
+
+# File temporanei
+*.tmp
+#Database
+anomalies.db

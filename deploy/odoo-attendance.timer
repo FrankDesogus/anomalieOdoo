@@ -1,0 +1,13 @@
+[Unit]
+Description=Esegue odoo-attendance.service ogni mattina alle 09:30
+
+[Timer]
+# Tutti i giorni alle 09:30. Per solo lun-ven usa: OnCalendar=Mon..Fri 09:30:00
+OnCalendar=*-*-* 09:30:00
+# Se il Pi era spento alle 09:30, esegue comunque al riavvio
+Persistent=true
+# Piccolo margine casuale per non colpire l'SMTP sempre nello stesso istante esatto
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

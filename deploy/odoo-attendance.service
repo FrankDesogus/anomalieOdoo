@@ -1,0 +1,12 @@
+[Unit]
+Description=Odoo attendance-day report + email
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/odoo_anomalie
+ExecStart=/home/pi/odoo_anomalie/venv/bin/python main.py --mode attendance-day --send-mail
+# Timeout ampio: nel caso Odoo risponda lentamente
+TimeoutStartSec=300

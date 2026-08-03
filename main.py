@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import yaml
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -10,6 +10,15 @@ from app.dedup import DedupStore
 from app.mailer import send_mail
 from app.odoo_client import OdooClient
 from app.attendance_report import build_attendance_rows, export_attendance_excel
+from app.stats_service import (
+    ArrivalStatsParams,
+    default_output_path,
+    parse_date as _svc_parse_date,
+    parse_time as _svc_parse_time,
+    resolve_pool_from_ids,
+    run as _svc_run,
+    validate_params as _svc_validate_params,
+)
 
 
 def day_range_utc(day: date, tz_name: str):
@@ -104,10 +113,80 @@ def resolve_target_day(day_arg: str | None, tz_name: str) -> date:
     return datetime.now(ZoneInfo(tz_name)).date()
 
 
+# ---------------------------------------------------------------------------
+# arrival-stats helpers
+# ---------------------------------------------------------------------------
+
+def validate_arrival_args(args) -> tuple:
+    """Return (from_day, to_day, arrival_start, arrival_end, bucket_minutes)."""
+    today = date.today()
+    from_day = _svc_parse_date(args.from_day) if args.from_day else date(today.year, 1, 1)
+    to_day = _svc_parse_date(args.to_day) if args.to_day else today
+    arrival_start = _svc_parse_time(args.arrival_start)
+    arrival_end = _svc_parse_time(args.arrival_end)
+    bm = args.bucket_minutes
+    _svc_validate_params(from_day, to_day, arrival_start, arrival_end, bm)
+    return from_day, to_day, arrival_start, arrival_end, bm
+
+
+def _load_pool_from_excel_file(path: str) -> list:
+    """Read employee IDs from an Excel pool file (columns: employee_id, include)."""
+    from openpyxl import load_workbook as _lw
+    wb = _lw(path, read_only=True)
+    ws = wb.active
+    headers = [
+        str(c.value).strip().lower() if c.value is not None else ""
+        for c in next(ws.iter_rows(min_row=1, max_row=1))
+    ]
+    try:
+        id_col = headers.index("employee_id")
+        include_col = headers.index("include")
+    except ValueError as exc:
+        raise ValueError(
+            f"Il file pool '{path}' deve avere le colonne 'employee_id' e 'include': {exc}"
+        )
+    ids = []
+    for row in ws.iter_rows(min_row=2):
+        id_val = row[id_col].value
+        inc_val = row[include_col].value
+        if id_val is None:
+            continue
+        if str(inc_val).strip().lower() in ("yes", "si", "sì", "1", "true"):
+            ids.append(int(id_val))
+    wb.close()
+    return ids
+
+
+def resolve_arrival_pool(args, client: OdooClient) -> list:
+    """
+    Return [(employee_id, name)] for the requested pool.
+    Raises ValueError if no pool option is provided or if any ID is not active in Odoo.
+    """
+    active = {emp_id: name for emp_id, name in client.fetch_active_employees()}
+
+    if args.all_employees:
+        return list(active.items())
+
+    if args.employees:
+        ids = [int(x.strip()) for x in args.employees.split(",") if x.strip()]
+    elif args.employees_file:
+        ids = _load_pool_from_excel_file(args.employees_file)
+    else:
+        raise ValueError(
+            "Specificare almeno una delle opzioni: --employees, --employees-file, --all-employees"
+        )
+
+    missing = [i for i in ids if i not in active]
+    if missing:
+        raise ValueError(f"ID dipendenti non trovati tra i dipendenti attivi in Odoo: {missing}")
+
+    return [(i, active[i]) for i in ids]
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["ops", "day", "month", "attendance-day"], default="ops",
-                        help="ops=oggi+ieri, day=un giorno, month=intero mese, attendance-day=presenze/assenze giorno")
+    parser.add_argument("--mode", choices=["ops", "day", "month", "attendance-day", "arrival-stats"], default="ops",
+                        help="ops=oggi+ieri, day=un giorno, month=intero mese, attendance-day=presenze/assenze giorno, arrival-stats=statistiche ingressi")
     parser.add_argument("--lookback-days", type=int, default=1,
                         help="Solo per mode=ops: quanti giorni indietro includere (default 1 = ieri)")
     parser.add_argument("--day", default=None, help="YYYY-MM-DD (richiesto se mode=day, opzionale per attendance-day)")
@@ -119,6 +198,23 @@ def main():
                         help="Non usare deduplica (utile per report mese/giorno)")
     parser.add_argument("--output", default=None,
                         help="Path output Excel (solo mode=attendance-day)")
+    # --- arrival-stats ---
+    parser.add_argument("--from-day", default=None, metavar="YYYY-MM-DD",
+                        help="Inizio periodo (default: 1 gennaio anno corrente)")
+    parser.add_argument("--to-day", default=None, metavar="YYYY-MM-DD",
+                        help="Fine periodo (default: oggi)")
+    parser.add_argument("--arrival-start", default="08:00", metavar="HH:MM",
+                        help="Inizio finestra ingresso valido (default: 08:00)")
+    parser.add_argument("--arrival-end", default="09:00", metavar="HH:MM",
+                        help="Fine finestra ingresso valido (default: 09:00)")
+    parser.add_argument("--bucket-minutes", type=int, default=10, metavar="N",
+                        help="Ampiezza delle fasce in minuti (default: 10)")
+    parser.add_argument("--employees", default=None, metavar="ID,ID,...",
+                        help="Pool esplicito: IDs separati da virgola")
+    parser.add_argument("--employees-file", default=None, metavar="PATH",
+                        help="Pool da file Excel (colonne: employee_id, employee_name, include)")
+    parser.add_argument("--all-employees", action="store_true",
+                        help="Usa tutti i dipendenti attivi come pool")
     args = parser.parse_args()
 
     with open("config.yaml", "r", encoding="utf-8") as f:
@@ -151,13 +247,71 @@ def main():
                 attendance_body = (
                     "Buongiorno,\n\n"
                     f"vi segnaliamo in allegato il report delle presenze e assenze relativo alla giornata del {target_day}.\n\n"
-                    "Il file contiene l’elenco dei dipendenti attivi e lo stato della presenza registrata su Odoo.\n\n"
+                    "Il file contiene l'elenco dei dipendenti attivi e lo stato della presenza registrata su Odoo.\n\n"
                     "La presente email è stata generata automaticamente dal sistema di controllo presenze.\n\n"
                     "Cordiali saluti."
                 )
                 send_mail(
                     subject=attendance_subject,
                     body=attendance_body,
+                    mail_cfg=mail_cfg,
+                    attachments=[str(generated)],
+                )
+                print("Email inviata.")
+        return
+
+    if args.mode == "arrival-stats":
+        if cfg["mode"].upper() != "ODOO":
+            raise RuntimeError("mode=arrival-stats è supportato solo con config.yaml mode=ODOO")
+
+        try:
+            from_day, to_day, arrival_start, arrival_end, bucket_minutes = validate_arrival_args(args)
+        except ValueError as exc:
+            print(f"Errore parametri: {exc}")
+            raise SystemExit(1)
+
+        o = cfg["odoo"]
+        client = OdooClient(o["url"], o["db"], o["user"], o["password"], cfg["timezone"])
+
+        try:
+            pool = resolve_arrival_pool(args, client)
+        except ValueError as exc:
+            print(f"Errore pool dipendenti: {exc}")
+            raise SystemExit(1)
+
+        print(
+            f"Pool: {len(pool)} dipendente/i  |  Periodo: {from_day} - {to_day}"
+            f"  |  Finestra: {arrival_start.strftime('%H:%M')}-{arrival_end.strftime('%H:%M')}"
+        )
+
+        output_path = Path(args.output) if args.output else default_output_path(from_day, to_day)
+        params = ArrivalStatsParams(
+            from_day=from_day, to_day=to_day,
+            arrival_start=arrival_start, arrival_end=arrival_end,
+            bucket_minutes=bucket_minutes,
+            employee_pool=pool,
+            output_path=output_path,
+        )
+        result = _svc_run(params, cfg)
+        generated = result.output_path
+        period_stats = result.period_stats
+        print(f"Report generato: {generated}")
+        print(f"  Ingressi validi: {period_stats.valid_count}  |  Esclusi: {period_stats.excluded_count}  |  Media: {period_stats.mean_dt}")
+
+        mail_cfg = cfg.get("mail", {})
+        if args.send_mail:
+            if not mail_cfg.get("enabled", False):
+                print("Invio email non effettuato: mail.enabled=false in config.yaml")
+            else:
+                send_mail(
+                    subject=f"Statistiche ingressi {from_day} - {to_day}",
+                    body=(
+                        f"Report statistiche orari di ingresso allegato.\n\n"
+                        f"Periodo: {from_day} - {to_day}\n"
+                        f"Pool: {len(pool)} dipendente/i\n"
+                        f"Ingressi validi: {period_stats.valid_count}\n"
+                        f"Media: {period_stats.mean_dt}\n"
+                    ),
                     mail_cfg=mail_cfg,
                     attachments=[str(generated)],
                 )

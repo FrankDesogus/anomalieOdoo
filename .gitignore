@@ -24,3 +24,6 @@ reports/
 *.tmp
 #Database
 anomalies.db
+
+# Configurazione con credenziali reali (usare config.example.yaml come modello)
+config.yaml

@@ -3,20 +3,20 @@ mode: "ODOO"   # FAKE oppure ODOO
 timezone: "Europe/Rome"
 
 odoo:
-  url: "https://elthub-srl.odoo.com"
-  db: "elthub-srl"
-  user: "odooadmin@elthub.it"
-  password: "4dm1nasdzxc2121!"
+  url: "https://your-instance.odoo.com"
+  db: "your-db"
+  user: "CHANGE_ME"
+  password: "CHANGE_ME"
 
 mail:
   enabled: true
-  smtp_host: "elthub-it.mail.protection.outlook.com"
+  smtp_host: "your-smtp-host"
   smtp_port: 25
   starttls: true
-  from: "info@elthub.it"
+  from: "sender@example.com"
   to:
-    - "riccardo.dibiagio@elthub.it"
-
+    - "recipient1@example.com"
+    - "recipient2@example.com"
 
 rules:
   ingress_deadline: "09:00"
@@ -32,4 +32,4 @@ rules:
   suppress_no_checkin_if_absent_after: "14:30"
 
 exemptions:
-  limited_rules_employee_ids: [1, 91, 95, 101, 103, 105, 107, 109, 110, 115, 117, 121,]
+  limited_rules_employee_ids: []
